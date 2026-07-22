@@ -2,12 +2,15 @@
     "name": "libTSM.so",
     "author": "XeTrinityz",
     "displayName": "That Sky Mod",
-    "description": "https://discord.gg/thatskymod",
+    "description": "Sky 0.34.1 compatibility build from the published 0.25.2 source snapshot; experimental",
     "majorVersion": 0,
     "minorVersion": 25,
     "patchVersion": 2,
+    "sourceSnapshotVersion": "0.25.2",
+    "compatibilityGameVersion": "0.34.1",
+    "compatibilityGameBuild": 404272,
     "displaysUI": true,
     "selfManagedUI": true,
-    "githubReleasesUrl": "https://api.github.com/repos/XeTrinityz/ThatSkyMod-Android/releases/latest",
+    "githubReleasesUrl": "https://api.github.com/repos/Catyro/ThatSkyMod-Android/releases/latest",
     "dependencies": []
 }
