@@ -12,6 +12,7 @@
 #include <fstream>
 #include <cstdio>
 #include <memory>
+#include <initializer_list>
 
 namespace tsm {
     namespace core {
@@ -24,17 +25,18 @@ namespace tsm {
             constexpr size_t MAX_DOWNLOAD_SIZE = 100 * 1024 * 1024;
 
             const char* GITHUB_API_HOST = _O("api.github.com");
-            const char* GITHUB_RELEASES_ENDPOINT = _O("/repos/XeTrinityz/ThatSkyMod-Android/releases/latest");
-            const char* DOWNLOAD_URL = _O("https://github.com/XeTrinityz/ThatSkyMod-Android/releases/latest/download/libTSM.so");
+            const char* GITHUB_RELEASES_ENDPOINT = _O("/repos/Catyro/ThatSkyMod-Android/releases/latest");
+            const char* DOWNLOAD_URL = _O("https://github.com/Catyro/ThatSkyMod-Android/releases/latest/download/libTSM.so");
             const char* DEFAULT_FILES_DIR = _O("/data/data/git.artdeell.skymodloader/files");
 
             std::mutex g_updateMutex;
 
-            std::string ExtractJsonValue(const std::string& json, const std::string& key) {
+            std::string ExtractJsonValue(const std::string& json, const std::string& key,
+                size_t startPos = 0) {
                 if (json.empty() || key.empty()) return _OS("");
 
                 std::string searchKey = _OS("\"") + key + _OS("\"");
-                size_t pos = json.find(searchKey);
+                size_t pos = json.find(searchKey, startPos);
                 if (pos == std::string::npos) return _OS("");
 
                 pos = json.find(':', pos);
@@ -59,6 +61,7 @@ namespace tsm {
             }
 
             struct UrlComponents {
+                std::string scheme;
                 std::string host;
                 std::string path;
                 bool valid = false;
@@ -69,11 +72,12 @@ namespace tsm {
                 if (url.empty()) return result;
 
                 std::string work = url;
-
                 auto schemePos = work.find(_OS("://"));
-                if (schemePos != std::string::npos) {
-                    work = work.substr(schemePos + 3);
-                }
+                if (schemePos == std::string::npos) return result;
+                result.scheme = work.substr(0, schemePos);
+                std::transform(result.scheme.begin(), result.scheme.end(), result.scheme.begin(),
+                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                work = work.substr(schemePos + 3);
 
                 auto slashPos = work.find('/');
                 if (slashPos == std::string::npos) {
@@ -89,8 +93,62 @@ namespace tsm {
                     result.path.pop_back();
                 }
 
-                result.valid = !result.host.empty();
+                std::transform(result.host.begin(), result.host.end(), result.host.begin(),
+                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                result.valid = !result.scheme.empty() && !result.host.empty()
+                    && result.host.find('@') == std::string::npos
+                    && result.host.find(':') == std::string::npos;
                 return result;
+            }
+
+            bool IsAllowedGitHubHost(const std::string& host) {
+                if (host == _OS("github.com")
+                    || host == _OS("api.github.com")
+                    || host == _OS("objects.githubusercontent.com")
+                    || host == _OS("release-assets.githubusercontent.com")) {
+                    return true;
+                }
+                const std::string suffix = _OS(".githubusercontent.com");
+                return host.length() > suffix.length()
+                    && host.compare(host.length() - suffix.length(), suffix.length(), suffix) == 0;
+            }
+
+            bool IsCatyroReleaseDownload(const std::string& url) {
+                const UrlComponents components = ParseUrl(url);
+                if (!components.valid || components.scheme != _OS("https")
+                    || components.host != _OS("github.com")) {
+                    return false;
+                }
+                const std::string releasePrefix = _OS("/Catyro/ThatSkyMod-Android/releases/download/");
+                const std::string latestPrefix = _OS("/Catyro/ThatSkyMod-Android/releases/latest/download/");
+                return components.path.rfind(releasePrefix, 0) == 0
+                    || components.path.rfind(latestPrefix, 0) == 0;
+            }
+
+            std::string ExtractReleaseAssetUrl(const std::string& json, const Version& version) {
+                if (json.empty() || !version.IsValid()) return _OS("");
+
+                const std::string desiredName = _OS("libTSM v") + version.ToString() + _OS(".so");
+                const std::string normalizedName = _OS("libTSM.v") + version.ToString() + _OS(".so");
+                const std::string fallbackName = _OS("libTSM.so");
+                for (const std::string& assetName : { desiredName, normalizedName, fallbackName }) {
+                    size_t cursor = 0;
+                    while (cursor < json.length()) {
+                        const size_t namePos = json.find(_OS("\"name\""), cursor);
+                        if (namePos == std::string::npos) break;
+                        const std::string name = ExtractJsonValue(json, _OS("name"), namePos);
+                        if (name == assetName) {
+                            const size_t urlPos = json.find(_OS("\"browser_download_url\""), namePos);
+                            if (urlPos != std::string::npos && urlPos - namePos <= 64 * 1024) {
+                                const std::string url = ExtractJsonValue(
+                                    json, _OS("browser_download_url"), urlPos);
+                                if (IsCatyroReleaseDownload(url)) return url;
+                            }
+                        }
+                        cursor = namePos + 6;
+                    }
+                }
+                return _OS("");
             }
 
             class FileHandle {
@@ -130,8 +188,14 @@ namespace tsm {
             Version v;
             if (str.empty()) return v;
 
-            std::string s = str;
+            std::string tag = str;
+            std::string s = tag;
+            if (tag.rfind(_OS("sky-"), 0) == 0 || tag.rfind(_OS("SKY-"), 0) == 0) {
+                s = tag.substr(4);
+            }
+            if (s.empty()) return v;
             if (s[0] == 'v' || s[0] == 'V') s = s.substr(1);
+            if (s.empty()) return v;
 
             auto parseToken = [](const std::string& t) -> int {
                 if (t.empty()) return 0;
@@ -191,7 +255,10 @@ namespace tsm {
         bool        UpdateChecker::HasUpdate()        const { std::lock_guard<std::mutex> lock(g_updateMutex); return m_hasUpdate; }
         std::string UpdateChecker::GetLatestVersion() const { std::lock_guard<std::mutex> lock(g_updateMutex); return m_latestVersion.ToString(); }
         std::string UpdateChecker::GetCurrentVersion()const { std::lock_guard<std::mutex> lock(g_updateMutex); return m_currentVersion.ToString(); }
-        std::string UpdateChecker::GetDownloadUrl()   const { return DOWNLOAD_URL; }
+        std::string UpdateChecker::GetDownloadUrl()   const {
+            std::lock_guard<std::mutex> lock(g_updateMutex);
+            return m_downloadUrl.empty() ? DOWNLOAD_URL : m_downloadUrl;
+        }
         bool        UpdateChecker::IsChecking()       const { std::lock_guard<std::mutex> lock(g_updateMutex); return m_checking; }
 
         void UpdateChecker::MarkNotificationSeen() {
@@ -213,7 +280,9 @@ namespace tsm {
 
 
         void UpdateChecker::CheckForUpdatesInternal() {
-            Version latestVersion = FetchLatestVersion();
+            std::string downloadUrl;
+            Version latestVersion = FetchLatestVersion(&downloadUrl);
+            bool shouldInstall = false;
 
             {
                 std::lock_guard<std::mutex> lock(g_updateMutex);
@@ -221,13 +290,15 @@ namespace tsm {
                 m_latestVersion = latestVersion;
 
                 m_hasUpdate = latestVersion.IsValid() && (latestVersion > m_currentVersion);
+                if (!downloadUrl.empty()) m_downloadUrl = downloadUrl;
+                shouldInstall = m_hasUpdate;
             }
 
-            InstallLatest();
+            if (shouldInstall) InstallLatest();
         }
 
 
-        Version UpdateChecker::FetchLatestVersion() {
+        Version UpdateChecker::FetchLatestVersion(std::string* downloadUrl) {
             try {
                 tsm::network::HttpClient client(GITHUB_API_HOST, 443);
                 client.SetTimeout(API_TIMEOUT_SECONDS);
@@ -244,7 +315,9 @@ namespace tsm {
                 if (tagName.empty()) return {};
 
                 Version version = Version::Parse(tagName);
-                return version.IsValid() ? version : Version{};
+                if (!version.IsValid()) return {};
+                if (downloadUrl) *downloadUrl = ExtractReleaseAssetUrl(response.body, version);
+                return version;
 
             }
             catch (...) {}
@@ -253,7 +326,15 @@ namespace tsm {
         }
 
         Version UpdateChecker::GetCurrentVersionFromConfig() {
-            return Version{ 0, 25, 2 };
+            return Version{
+#ifdef TSM_COMPAT_VERSION_MAJOR
+                TSM_COMPAT_VERSION_MAJOR,
+                TSM_COMPAT_VERSION_MINOR,
+                TSM_COMPAT_VERSION_PATCH
+#else
+                0, 0, 0
+#endif
+            };
         }
 
 
@@ -338,7 +419,8 @@ namespace tsm {
 
                 for (int redirectCount = 0; redirectCount < MAX_REDIRECTS; ++redirectCount) {
                     UrlComponents components = ParseUrl(currentUrl);
-                    if (!components.valid) return false;
+                    if (!components.valid || components.scheme != _OS("https")
+                        || !IsAllowedGitHubHost(components.host)) return false;
 
                     tsm::network::HttpClient client(components.host, 443);
                     client.SetTimeout(DOWNLOAD_TIMEOUT_SECONDS);
@@ -352,6 +434,7 @@ namespace tsm {
                     if (response.status >= 301 && response.status <= 308) {
                         std::string location = GetHeader(response.headers, _OS("Location"));
                         if (location.empty()) return false;
+                        if (redirectCount == 0 && !IsCatyroReleaseDownload(currentUrl)) return false;
                         currentUrl = location;
                         continue;
                     }
