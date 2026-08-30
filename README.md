@@ -89,7 +89,7 @@ This repository hosts the Android binary (.so) for That Sky Mod (TSM). It is int
 
 ## Credits
 
-- **Developer**: XeTrinityz
+- **Developer**: XeTrinityz (retired)
 - Maintained by Catyro
 
 <p align="right"><a href="#readme-top">Back to top</a></p>
