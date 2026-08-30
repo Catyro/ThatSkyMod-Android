@@ -1,7 +1,7 @@
 <a id="readme-top"></a>
 <div align="center">
   <!-- PROJECT LOGO / TITLE -->
-  <h1>That Sky Mod (Android)</h1>
+  <h1>That Sky Mod (Android)—RETIRED</h1>
     <img src="https://i.ibb.co/qL5TS2q4/icon.png" alt="TSM Logo" width="80" height="80">
 
   <p align="center">
